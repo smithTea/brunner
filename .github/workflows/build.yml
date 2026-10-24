@@ -75,18 +75,42 @@ jobs:
 
       - name: Select Xcode
         run: |
+          echo "Installed Xcode versions:"
+          ls -d /Applications/Xcode*.app || true
+          echo "Current default: $(xcode-select -p)"
+
           if [ "$XCODE_WANTED" = "latest" ]; then
-            XC=$(for x in /Applications/Xcode_*.app; do
-                   case "$x" in *[Bb]eta*) ;; *) echo "$x" ;; esac
-                 done | sort -V | tail -1)
+            # Pick the highest non-beta Xcode_X.Y[.Z].app (python avoids
+            # relying on 'sort -V', which macOS's sort may not support).
+            XC=$(python3 - <<'PY'
+          import glob
+          best = None
+          for p in glob.glob("/Applications/Xcode_*.app"):
+              name = p[len("/Applications/Xcode_"):-len(".app")]
+              try:
+                  v = tuple(int(x) for x in name.split("."))
+              except ValueError:
+                  continue  # skips betas / release candidates like 26.1_beta
+              if best is None or v > best[0]:
+                  best = (v, p)
+          print(best[1] if best else "")
+          PY
+            )
+            if [ -z "$XC" ]; then
+              echo "::warning::No Xcode_X.Y.app found; keeping the runner's default Xcode."
+            fi
           else
             XC="/Applications/Xcode_${XCODE_WANTED}.app"
+            if [ ! -d "$XC" ]; then
+              echo "::error::Xcode $XCODE_WANTED is not installed on this runner (see list above)."
+              exit 1
+            fi
           fi
-          if [ ! -d "$XC" ]; then
-            echo "::error::Xcode not found at $XC. Installed:"; ls -d /Applications/Xcode*.app
-            exit 1
+
+          if [ -n "$XC" ]; then
+            echo "Selecting $XC"
+            sudo xcode-select -s "$XC/Contents/Developer"
           fi
-          sudo xcode-select -s "$XC/Contents/Developer"
           xcodebuild -version
 
       - name: Download frameworks and resources
